@@ -46,6 +46,23 @@ class HeightDataset(Dataset):
         return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
 
 
+class ContextSensitiveHeightDataset(Dataset):
+    def __init__(self):
+        X_data, self.Y, self.C = load_height_data(centered=True)
+        self.context_labels = np.unique(self.C)
+        C_df = pl.DataFrame({"Country": self.C.flatten()})
+        C_df = C_df.to_dummies()
+        C_df = C_df.cast({pl.selectors.numeric(): pl.Float32})
+        C_one_hot = torch.from_numpy(np.array(C_df))
+        self.X = torch.cat((torch.from_numpy(X_data), C_one_hot), dim=1)
+
+    def __len__(self):
+        return len(self.X)
+    
+    def __getitem__(self, idx):
+        return self.X[idx], torch.from_numpy(self.Y[idx])
+
+
 class LinearRegression:
     def __init__(self):
         pass
@@ -83,21 +100,28 @@ class ContextLinearRegression:
 
 
 class NeuralNetwork(nn.Module):
-    def __init__(self, dim_in, dim_out):
+    def __init__(self, dim_in, dim_out, dim_hidden, n_hidden):
         super().__init__()
         self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(dim_in, 20),
-            nn.ReLU(),
-            nn.Linear(20, 20),
-            nn.ReLU(),
-            nn.Linear(20, dim_out)
+        
+        self.first_layer = nn.Sequential(
+            nn.Linear(dim_in, dim_hidden),
+            nn.ReLU()
         )
+        self.linear_relu_stack = nn.Sequential(*[
+            nn.Sequential(
+                    nn.Linear(dim_hidden, dim_hidden),
+                    nn.ReLU()
+                ) for _ in range(n_hidden - 1)
+        ])
+        self.last_layer = nn.Linear(dim_hidden, dim_out)
 
     def forward(self, x):
         x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
-        return logits
+        x = self.first_layer(x)
+        x = self.linear_relu_stack(x)
+        output = self.last_layer(x)
+        return output
 
 
 
@@ -131,3 +155,4 @@ def test(dataloader, model, loss_fn, device):
             test_loss += loss_fn(pred, y)
     test_loss /= num_batches
     print(f"Test Error: \n Avg loss: {test_loss:>8f} \n")
+    return test_loss
