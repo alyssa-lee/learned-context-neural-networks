@@ -124,6 +124,38 @@ class NeuralNetwork(nn.Module):
         return output
 
 
+class LearnedContextNN(nn.Module):
+    def __init__(self, dim_in, dim_out, dim_hidden, n_hidden, dim_context, n_context):
+        super().__init__()
+
+        self.dim_in = dim_in
+        
+        self.context = nn.Parameter(torch.rand(n_context, dim_context))
+        self.flatten = nn.Flatten()
+        
+        self.first_layer = nn.Sequential(
+            nn.Linear(dim_in + dim_context, dim_hidden),
+            nn.ReLU()
+        )
+        self.linear_relu_stack = nn.Sequential(*[
+            nn.Sequential(
+                    nn.Linear(dim_hidden, dim_hidden),
+                    nn.ReLU()
+                ) for _ in range(n_hidden - 1)
+        ])
+        self.last_layer = nn.Linear(dim_hidden, dim_out)
+
+    def forward(self, x):
+        x = self.flatten(x)
+        device = x.device
+        I = torch.eye(self.dim_in, device=device)
+        block = torch.block_diag(I, self.context.to(device))
+        x = torch.matmul(x, block)
+        x = self.first_layer(x)
+        x = self.linear_relu_stack(x)
+        output = self.last_layer(x)
+        return output
+
 
 def train(dataloader, model, loss_fn, optimizer, device):
     size = len(dataloader.dataset)
