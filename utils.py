@@ -63,67 +63,6 @@ class ContextSensitiveHeightDataset(Dataset):
         return self.X[idx], torch.from_numpy(self.Y[idx])
 
 
-def load_brca_data(centered=False, context="her2_er"):
-    df_orig = pl.read_csv("data/METABRIC_RNA.csv", infer_schema_length=1000)
-
-    df_meta = df_orig[:,:31]
-    df_X = np.array(df_orig[:,31:].cast({pl.selectors.numeric(): pl.Float32}))
-
-    df_Y = np.array(df_meta.select(
-        pl.col("overall_survival").cast(pl.Float32)
-    ))
-    
-    df_C_all = df_meta.with_columns(
-        pl.concat_str(
-            [
-                pl.col("her2_status"),
-                pl.col("er_status")
-            ],
-            separator="_",
-        ).alias("her2_er"),
-        pl.concat_str(
-            [
-                pl.col("chemotherapy"),
-                pl.col("radio_therapy"),
-                pl.col("hormone_therapy")
-            ],
-            separator="_",
-        ).alias("chemo_radio_hormone"),
-        pl.concat_str(
-            [
-                pl.col("her2_status"),
-                pl.col("er_status"),
-                pl.col("chemotherapy"),
-                pl.col("radio_therapy"),
-                pl.col("hormone_therapy")
-            ],
-            separator="_",
-        ).alias("her2_er_chemo_radio_hormone"),
-    )
-
-    df_C = np.array(df_C_all.select(context))
-
-    if centered:
-        X_mu = np.mean(df_X, axis=0)
-        X_centered = df_X - X_mu
-        return X_centered, df_Y, df_C
-
-
-    return df_X, df_Y, df_C
-
-
-
-class BRCADataset(Dataset):
-    def __init__(self):
-        self.X, self.Y, self.C = load_brca_data()
-
-    def __len__(self):
-        return len(self.X)
-    
-    def __getitem__(self, idx):
-        return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
-
-
 class LinearRegression:
     def __init__(self):
         pass
@@ -266,6 +205,7 @@ def train(dataloader, model, loss_fn, optimizer, device):
     model.train()
     for batch, (X, y) in enumerate(dataloader):
         X, y = X.to(device), y.to(device)
+        optimizer.zero_grad()
 
         # Compute prediction error
         pred = model(X)
@@ -274,9 +214,9 @@ def train(dataloader, model, loss_fn, optimizer, device):
         # Backpropagation
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
 
-        if batch % 100 == 0:
+        # if batch % 100 == 0:
+        if batch % 10 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
