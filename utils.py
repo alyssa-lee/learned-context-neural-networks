@@ -63,6 +63,54 @@ class ContextSensitiveHeightDataset(Dataset):
         return self.X[idx], torch.from_numpy(self.Y[idx])
 
 
+def load_parkinsons_data(include_age_sex=False):
+    df = pl.read_csv("data/parkinsons_updrs.data.csv")
+    df_X = np.array(df[:,6:].cast(pl.Float32))
+    df_Y = np.array(df.select("total_UPDRS").cast(pl.Float32))
+
+    if include_age_sex:
+        df_C = np.array(df.select("subject#", "age", "sex"))
+    else:
+        df_C = np.array(df.select("subject#"))
+
+    X_mu = np.mean(df_X, axis=0)
+    Y_mu = np.mean(df_Y, axis=0)
+    X_std = np.std(df_X, axis=0)
+    Y_std = np.std(df_Y, axis=0)
+    X_centered_scaled = (df_X - X_mu)/X_std
+    Y_centered_scaled = (df_Y - Y_mu)/Y_std
+
+    return X_centered_scaled, Y_centered_scaled, df_C
+
+
+class ParkinsonsDataset(Dataset):
+    def __init__(self):
+        self.X, self.Y, self.C = load_parkinsons_data()
+
+    def __len__(self):
+        return len(self.X)
+    
+    def __getitem__(self, idx):
+        return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
+
+
+class ContextSensitiveParkinsonsDataset(Dataset):
+    def __init__(self):
+        X_data, self.Y, self.C = load_parkinsons_data()
+        self.context_labels = np.unique(self.C)
+        C_df = pl.DataFrame({"subject#": self.C.flatten()})
+        C_df = C_df.to_dummies()
+        C_df = C_df.cast({pl.selectors.numeric(): pl.Float32})
+        C_one_hot = torch.from_numpy(np.array(C_df))
+        self.X = torch.cat((torch.from_numpy(X_data), C_one_hot), dim=1)
+
+    def __len__(self):
+        return len(self.X)
+    
+    def __getitem__(self, idx):
+        return self.X[idx], torch.from_numpy(self.Y[idx])
+
+
 class LinearRegression:
     def __init__(self):
         pass
