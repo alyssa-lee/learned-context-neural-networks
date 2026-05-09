@@ -63,6 +63,67 @@ class ContextSensitiveHeightDataset(Dataset):
         return self.X[idx], torch.from_numpy(self.Y[idx])
 
 
+def load_brca_data(centered=False, context="her2_er"):
+    df_orig = pl.read_csv("data/METABRIC_RNA.csv", infer_schema_length=1000)
+
+    df_meta = df_orig[:,:31]
+    df_X = np.array(df_orig[:,31:].cast({pl.selectors.numeric(): pl.Float32}))
+
+    df_Y = np.array(df_meta.select(
+        pl.col("overall_survival").cast(pl.Float32)
+    ))
+    
+    df_C_all = df_meta.with_columns(
+        pl.concat_str(
+            [
+                pl.col("her2_status"),
+                pl.col("er_status")
+            ],
+            separator="_",
+        ).alias("her2_er"),
+        pl.concat_str(
+            [
+                pl.col("chemotherapy"),
+                pl.col("radio_therapy"),
+                pl.col("hormone_therapy")
+            ],
+            separator="_",
+        ).alias("chemo_radio_hormone"),
+        pl.concat_str(
+            [
+                pl.col("her2_status"),
+                pl.col("er_status"),
+                pl.col("chemotherapy"),
+                pl.col("radio_therapy"),
+                pl.col("hormone_therapy")
+            ],
+            separator="_",
+        ).alias("her2_er_chemo_radio_hormone"),
+    )
+
+    df_C = np.array(df_C_all.select(context))
+
+    if centered:
+        X_mu = np.mean(df_X, axis=0)
+        X_centered = df_X - X_mu
+        return X_centered, df_Y, df_C
+
+
+    return df_X, df_Y, df_C
+
+
+
+class BRCADataset(Dataset):
+    def __init__(self):
+        self.X, self.Y, self.C = load_brca_data()
+
+    def __len__(self):
+        return len(self.X)
+    
+    def __getitem__(self, idx):
+        return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
+
+
 class LinearRegression:
     def __init__(self):
         pass
@@ -76,6 +137,15 @@ class LinearRegression:
         X_bias = np.hstack((np.ones((X.shape[0], 1), dtype=X.dtype), X))
         return X_bias @ self.coeffs
     
+
+class LogisticRegression(torch.nn.Module):
+    def __init__(self, n_features, output_dim):
+        super().__init__()
+        self.linear = torch.nn.Linear(n_features, output_dim)
+    def forward(self, x):
+        outputs = torch.sigmoid(self.linear(x))
+        return outputs
+
 
 class ContextLinearRegression:
     def __init__(self):
@@ -155,6 +225,40 @@ class LearnedContextNN(nn.Module):
         x = self.linear_relu_stack(x)
         output = self.last_layer(x)
         return output
+
+
+class LearnedContextSkipNN(nn.Module):
+    def __init__(self, dim_in, dim_out, dim_hidden, n_hidden, dim_context, n_context):
+        super().__init__()
+
+        self.dim_in = dim_in
+        
+        self.context = nn.Parameter(torch.rand(n_context, dim_context))
+        self.flatten = nn.Flatten()
+        
+        self.first_layer = nn.Sequential(
+            nn.Linear(dim_in + dim_context, dim_hidden),
+            nn.ReLU()
+        )
+        self.linear_relu_stack = nn.Sequential(*[
+            nn.Sequential(
+                    nn.Linear(dim_hidden, dim_hidden),
+                    nn.ReLU()
+                ) for _ in range(n_hidden - 1)
+        ])
+        self.last_layer = nn.Linear(dim_hidden, dim_out)
+
+    def forward(self, x):
+        x = self.flatten(x)
+        device = x.device
+        I = torch.eye(self.dim_in, device=device)
+        block = torch.block_diag(I, self.context.to(device))
+        x = torch.matmul(x, block)
+        x1 = self.first_layer(x)
+        x2 = self.linear_relu_stack(x1)
+        output = self.last_layer(x1 + x2)
+        return output
+
 
 
 def train(dataloader, model, loss_fn, optimizer, device):
